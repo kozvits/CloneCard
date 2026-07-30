@@ -1,0 +1,28 @@
+[versions]
+agp = "8.2.2"
+kotlin = "1.9.22"
+coreKtx = "1.12.0"
+lifecycleRuntimeKtx = "2.7.0"
+activityCompose = "1.8.2"
+composeBom = "2024.02.00"
+navigationCompose = "2.7.7"
+roomRuntime = "2.6.1"
+ksp = "1.9.22-1.0.17"
+gson = "2.10.1"
+
+[libraries]
+core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
+room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "roomRuntime" }
+room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "roomRuntime" }
+room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "roomRuntime" }
+gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
