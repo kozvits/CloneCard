@@ -208,13 +208,7 @@ class MainActivity : ComponentActivity() {
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             nfcState.value = nfcState.value.copy(scanning = true, message = "Запись карты...")
             try {
-                val mfcDump = com.kozvits.clonecard.data.model.MfcDump(
-                    uid = dump.uid,
-                    uidBytes = dump.uidBytes,
-                    blocks = dump.blocks,
-                    label = dump.label
-                )
-                val ok = mfHandler.writeCard(tag, mfcDump, unsafe) { progress, msg ->
+                val ok = mfHandler.writeCard(tag, dump.blocks, unsafe) { progress, msg ->
                     nfcState.value = nfcState.value.copy(
                         message = "Запись: ${(progress * 100).toInt()}% — $msg"
                     )
@@ -245,13 +239,7 @@ class MainActivity : ComponentActivity() {
                 val uid = mfHandler.readUid(tag)
                 val uidHex = uid.joinToString(" ") { "%02X".format(it) }
                 val blankDump = SimulationData.createBlankDump(uidHex)
-                val mfcDump = com.kozvits.clonecard.data.model.MfcDump(
-                    uid = blankDump.uid,
-                    uidBytes = blankDump.uidBytes,
-                    blocks = blankDump.blocks,
-                    label = "Чистая карта"
-                )
-                val ok = mfHandler.writeCard(tag, mfcDump, unsafe = true) { progress, msg ->
+                val ok = mfHandler.writeCard(tag, blankDump.blocks, unsafe = true) { progress, msg ->
                     nfcState.value = nfcState.value.copy(
                         message = "Очистка: ${(progress * 100).toInt()}% — $msg"
                     )
