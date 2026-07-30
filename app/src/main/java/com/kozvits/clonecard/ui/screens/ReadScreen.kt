@@ -87,11 +87,12 @@ fun ReadScreen(
                         }
                     )
                     Spacer(modifier = Modifier.height(12.dp))
+                    val rd = readDump
                     Text(
                         text = when {
                             nfcState.value.scanning -> nfcState.value.message
                             nfcState.value.error != null -> "Ошибка: ${nfcState.value.error}"
-                            readDump != null -> "Карта прочитана! UID: ${readDump.uid}"
+                            rd != null -> "Карта прочитана! UID: ${rd.uid}"
                             else -> "Поднесите карту к NFC-считывателю"
                         },
                         style = MaterialTheme.typography.bodyLarge,

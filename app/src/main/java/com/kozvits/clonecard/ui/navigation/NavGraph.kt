@@ -12,6 +12,7 @@ import com.kozvits.clonecard.MainActivity
 import com.kozvits.clonecard.data.repository.DumpRepository
 import com.kozvits.clonecard.ui.screens.*
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 @Composable
 fun NavGraph(
@@ -92,7 +93,7 @@ fun NavGraph(
                     navController.navigate(Screen.Write.createRoute(id))
                 },
                 onDelete = { id ->
-                    scope.run { kotlinx.coroutines.GlobalScope.launch { repository.deleteDumpById(id) } }
+                    scope.launch { repository.deleteDumpById(id) }
                     navController.popBackStack()
                 },
                 repository = repository,

@@ -2,32 +2,7 @@ package com.kozvits.clonecard.nfc
 
 import android.nfc.Tag
 import android.nfc.tech.MifareClassic
-import android.nfc.tech.NfcA
 import java.io.IOException
-
-/**
- * Состояние при операциях с NFC.
- */
-sealed class NfcState {
-    data object Idle : NfcState()
-    data object WaitingForCard : NfcState()
-    data class Scanning(val progress: Float = 0f, val message: String = "") : NfcState()
-    data class Success(val message: String) : NfcState()
-    data class Error(val message: String) : NfcState()
-}
-
-/**
- * Результат чтения карты.
- */
-data class ReadResult(
-    val uid: List<Int>,
-    val atqa: ByteArray? = null,
-    val sak: ByteArray? = null,
-    val blocks: List<Int>,         // все 1024 байта
-    val authKeys: List<String> = emptyList()
-) {
-    val uidHex: String get() = uid.joinToString(" ") { "%02X".format(it) }
-}
 
 /**
  * Инкапсулирует работу с MIFARE Classic через Android NFC.
@@ -38,7 +13,8 @@ class MfCardHandler {
 
     fun connect(tag: Tag): Boolean = try {
         mf = MifareClassic.get(tag)
-        mf?.connect() == true
+        mf?.connect()
+        mf?.isConnected == true
     } catch (e: IOException) {
         false
     }
@@ -61,35 +37,32 @@ class MfCardHandler {
     }
 
     val size: Int get() = mf?.size ?: 0
-
     val sectorCount: Int get() = mf?.sectorCount ?: 16
 
-    /** Прочитать UID карты. */
-    fun readUid(tag: Tag): List<Int> {
-        val nfcA = NfcA.get(tag) ?: return emptyList()
-        return try {
-            if (!nfcA.isConnected) nfcA.connect()
-            nfcA.uid.map { it.toInt() and 0xFF }
-        } catch (e: Exception) { emptyList() }
-        finally { try { nfcA.close() } catch (_: Exception) {} }
-    }
+    /** Извлечь UID из тега (список Int для удобства) */
+    fun readUid(tag: Tag): List<Int> =
+        tag.id.map { it.toInt() and 0xFF }
 
     /**
-     * Прочитать карту целиком.
-     * Использует ключи по умолчанию: [FF..FF, 00..00, A0A1A2A3A4A5, D3F7D3F7D3F7].
+     * Прочитать карту целиком (64 блока × 16 байт = 1024 байта).
+     * Пробует ключи: FF..FF, 00..00, A0A1A2A3A4A5, D3F7D3F7D3F7.
      */
-    fun readCard(tag: Tag, onProgress: (Float, String) -> Unit = { _, _ -> }): ReadResult? {
-        val mf = try { MifareClassic.get(tag)?.also { it.connect() } } catch (_: Exception) { null }
-            ?: return null
+    fun readCard(
+        tag: Tag,
+        onProgress: (Float, String) -> Unit = { _, _ -> }
+    ): ReadResult? {
+        val mf = try {
+            MifareClassic.get(tag)?.also { it.connect() }
+        } catch (_: Exception) { null } ?: return null
 
-        val uid = mf.uid.map { it.toInt() and 0xFF }
+        val uid = tag.id.map { it.toInt() and 0xFF }
         val totalSectors = mf.sectorCount
         val allBlocks = mutableListOf<Int>()
         val defaultKeys = listOf(
-            byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()),
+            byteArrayOf(-1, -1, -1, -1, -1, -1),                                // FF FF FF FF FF FF
             byteArrayOf(0, 0, 0, 0, 0, 0),
             byteArrayOf(0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5),
-            byteArrayOf(0xD3, 0xF7.toByte(), 0xD3, 0xF7.toByte(), 0xD3, 0xF7.toByte()),
+            byteArrayOf(-0x2D, -0x09, -0x2D, -0x09, -0x2D, -0x09),              // D3 F7 D3 F7 D3 F7
         )
         val authenticated = mutableSetOf<Int>()
 
@@ -98,24 +71,22 @@ class MfCardHandler {
 
             for (key in defaultKeys) {
                 try {
-                    mf.authenticateSectorUsingKeyB(sector, key)
+                    mf.authenticateSectorWithKeyB(sector, key)
                     authenticated.add(sector)
                     break
                 } catch (_: Exception) {}
             }
 
             if (sector !in authenticated) {
-                // Пробуем KeyA
                 for (key in defaultKeys) {
                     try {
-                        mf.authenticateSectorUsingKeyA(sector, key)
+                        mf.authenticateSectorWithKeyA(sector, key)
                         authenticated.add(sector)
                         break
                     } catch (_: Exception) {}
                 }
             }
 
-            // Читаем блоки сектора
             val blockIndex = sector * 4
             for (b in 0 until 4) {
                 val blockNum = blockIndex + b
@@ -123,67 +94,69 @@ class MfCardHandler {
                     val raw = mf.readBlock(blockNum)
                     val bytes = raw.map { it.toInt() and 0xFF }
                     allBlocks.addAll(bytes)
-                } catch (e: Exception) {
-                    // Блок не читается — заполняем нулями
+                } catch (_: Exception) {
                     allBlocks.addAll((0 until 16).map { 0 })
                 }
             }
         }
 
         try { mf.close() } catch (_: Exception) {}
-        return if (allBlocks.isNotEmpty()) ReadResult(
-            uid = uid,
-            blocks = allBlocks,
-            authKeys = authenticated.map { "Sector $it" }
-        ) else null
+
+        return if (allBlocks.isNotEmpty())
+            ReadResult(uid = uid, blocks = allBlocks)
+        else null
     }
 
     /**
-     * Запись одного блока на карту.
-     * blockNum: 0-63, data: 16 байт.
+     * Записать один блок на карту.
      */
-    fun writeBlock(tag: Tag, sector: Int, blockNum: Int, data: ByteArray, key: ByteArray = defaultKey): Boolean {
+    fun writeBlock(
+        tag: Tag,
+        sector: Int,
+        blockNum: Int,
+        data: ByteArray,
+        key: ByteArray = defaultKey
+    ): Boolean {
         val mf = try { MifareClassic.get(tag)?.also { it.connect() } } catch (_: Exception) { null }
             ?: return false
         return try {
-            mf.authenticateSectorUsingKeyB(sector, key)
+            mf.authenticateSectorWithKeyB(sector, key)
             mf.writeBlock(blockNum, data)
             true
-        } catch (e: Exception) { false }
+        } catch (_: Exception) { false }
         finally { try { mf.close() } catch (_: Exception) {} }
     }
 
     /**
-     * Записать дамп на карту. Каждый блок требует отдельной аутентификации.
-     * unsafe = true — разрешить запись блока 0 (UID).
+     * Записать полный дамп на карту.
+     * @param unsafe true = разрешить запись блока 0 (UID).
      */
     fun writeCard(
         tag: Tag,
-        dump: com.kozvits.clonecard.data.model.MfcDump,
+        blocks: List<Int>,
         unsafe: Boolean = false,
         onProgress: (Float, String) -> Unit = { _, _ -> }
     ): Boolean {
         val mf = try { MifareClassic.get(tag)?.also { it.connect() } } catch (_: Exception) { null }
             ?: return false
 
-        val key = byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte())
+        val key = byteArrayOf(-1, -1, -1, -1, -1, -1)   // FF FF FF FF FF FF
         val zeroKey = byteArrayOf(0, 0, 0, 0, 0, 0)
         var success = true
 
         try {
             for (sector in 0 until 16) {
-                onProgress(sector.toFloat() / 16, "Сектор $sector / 16")
+                onProgress(sector.toFloat() / 16f, "Сектор $sector / 16")
 
-                // Аутентификация
                 var authed = false
                 for (k in listOf(key, zeroKey)) {
                     try {
-                        mf.authenticateSectorUsingKeyB(sector, k)
+                        mf.authenticateSectorWithKeyB(sector, k)
                         authed = true
                         break
                     } catch (_: Exception) {}
                     try {
-                        mf.authenticateSectorUsingKeyA(sector, k)
+                        mf.authenticateSectorWithKeyA(sector, k)
                         authed = true
                         break
                     } catch (_: Exception) {}
@@ -192,15 +165,15 @@ class MfCardHandler {
 
                 for (b in 0 until 4) {
                     val blockNum = sector * 4 + b
-                    if (blockNum == 0 && !unsafe) continue  // блок UID — только с unsafe
+                    if (blockNum == 0 && !unsafe) continue
 
-                    val dumpBlock = dump.getBlock(blockNum)
-                    if (dumpBlock.size != 16) continue
-
-                    val data = dumpBlock.map { it.toByte() }.toByteArray()
+                    val start = blockNum * 16
+                    if (start + 16 > blocks.size) continue
+                    val blockData = blocks.subList(start, start + 16)
+                        .map { it.toByte() }.toByteArray()
                     try {
-                        mf.writeBlock(blockNum, data)
-                    } catch (e: Exception) {
+                        mf.writeBlock(blockNum, blockData)
+                    } catch (_: Exception) {
                         if (blockNum != 0) success = false
                     }
                 }
@@ -212,6 +185,14 @@ class MfCardHandler {
     }
 
     companion object {
-        val defaultKey = byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte())
+        val defaultKey = byteArrayOf(-1, -1, -1, -1, -1, -1)
     }
+}
+
+/** Результат чтения карты. */
+data class ReadResult(
+    val uid: List<Int>,
+    val blocks: List<Int>     // 1024 байта (64 блока × 16)
+) {
+    val uidHex: String get() = uid.joinToString(" ") { "%02X".format(it) }
 }

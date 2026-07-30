@@ -20,12 +20,14 @@ import com.kozvits.clonecard.ui.theme.NfcReady
 import com.kozvits.clonecard.ui.theme.NfcScanning
 import kotlinx.coroutines.CoroutineScope
 
+private val DEFAULT_MENU_COLOR = androidx.compose.ui.graphics.Color(0xFF6750A4)
+
 data class MenuCard(
     val title: String,
     val subtitle: String,
     val icon: ImageVector,
     val route: String,
-    val color: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.primary
+    val color: androidx.compose.ui.graphics.Color = DEFAULT_MENU_COLOR
 )
 
 private val menuItems = listOf(
@@ -92,9 +94,10 @@ fun HomeScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium
                         )
-                        if (nfcState.value.dump != null) {
+                        val dump = nfcState.value.dump
+                        if (dump != null) {
                             Text(
-                                text = "UID: ${nfcState.value.dump.uid}",
+                                text = "UID: ${dump.uid}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                             )
