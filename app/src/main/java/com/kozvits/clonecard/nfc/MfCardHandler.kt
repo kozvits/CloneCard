@@ -61,8 +61,8 @@ class MfCardHandler {
         val defaultKeys = listOf(
             byteArrayOf(-1, -1, -1, -1, -1, -1),                                // FF FF FF FF FF FF
             byteArrayOf(0, 0, 0, 0, 0, 0),
-            byteArrayOf(0xA0.toByte(), 0xA1.toByte(), 0xA2.toByte(), 0xA3.toByte(), 0xA4.toByte(), 0xA5.toByte()),
-            byteArrayOf(-0x2D.toByte(), -0x09.toByte(), -0x2D.toByte(), -0x09.toByte(), -0x2D.toByte(), -0x09.toByte()),              // D3 F7 D3 F7 D3 F7
+            byteArrayOf((-96).toByte(), (-95).toByte(), (-94).toByte(), (-93).toByte(), (-92).toByte(), (-91).toByte()),    // A0 A1 A2 A3 A4 A5
+            byteArrayOf((-45).toByte(), (-9).toByte(), (-45).toByte(), (-9).toByte(), (-45).toByte(), (-9).toByte()),       // D3 F7 D3 F7 D3 F7
         )
         val authenticated = mutableSetOf<Int>()
 
