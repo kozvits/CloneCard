@@ -1,11 +1,9 @@
 package com.kozvits.clonecard.ui.screens
 
-import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -16,20 +14,26 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kozvits.clonecard.MainActivity
+import com.kozvits.clonecard.data.SimulationData
+import com.kozvits.clonecard.data.db.DumpEntity
+import com.kozvits.clonecard.data.repository.DumpRepository
 import com.kozvits.clonecard.ui.theme.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReadScreen(
     onBack: () -> Unit,
-    onCardRead: (List<Int>) -> Unit
+    repository: DumpRepository,
+    activity: MainActivity,
+    nfcState: MutableState<MainActivity.NfcStatus>,
+    pendingAction: MutableState<MainActivity.PendingNfcAction?>,
+    scope: CoroutineScope
 ) {
-    var state by remember { mutableStateOf("idle") } // idle, waiting, reading, done, error
-    var uid by remember { mutableStateOf("") }
-    var dumpText by remember { mutableStateOf("") }
-    var errorMsg by remember { mutableStateOf("") }
-    var progress by remember { mutableStateOf(0f) }
-    var sectorInfo by remember { mutableStateOf("") }
+    var readDump by remember { mutableStateOf<MainActivity.ReadResultData?>(null) }
+    var saved by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -50,70 +54,52 @@ fun ReadScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Индикатор NFC
+            // Статус
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = when (state) {
-                        "idle" -> MaterialTheme.colorScheme.surfaceVariant
-                        "waiting" -> NfcScanning
-                        "reading" -> NfcScanning
-                        "done" -> NfcSuccess
-                        "error" -> NfcError
+                    containerColor = when {
+                        nfcState.value.scanning -> NfcScanning.copy(alpha = 0.15f)
+                        nfcState.value.error != null -> NfcError.copy(alpha = 0.15f)
+                        readDump != null -> NfcSuccess.copy(alpha = 0.15f)
                         else -> MaterialTheme.colorScheme.surfaceVariant
-                    }.copy(alpha = 0.15f)
+                    }
                 )
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
-                        imageVector = when (state) {
-                            "idle" -> Icons.Filled.Nfc
-                            "waiting" -> Icons.Filled.Contactless
-                            "reading" -> Icons.Filled.Sync
-                            "done" -> Icons.Filled.CheckCircle
-                            "error" -> Icons.Filled.Error
+                        imageVector = when {
+                            nfcState.value.scanning -> Icons.Filled.Sync
+                            nfcState.value.error != null -> Icons.Filled.Error
+                            readDump != null -> Icons.Filled.CheckCircle
                             else -> Icons.Filled.Nfc
                         },
                         contentDescription = null,
                         modifier = Modifier.size(64.dp),
-                        tint = when (state) {
-                            "done" -> NfcSuccess
-                            "error" -> NfcError
+                        tint = when {
+                            nfcState.value.scanning -> NfcScanning
+                            nfcState.value.error != null -> NfcError
+                            readDump != null -> NfcSuccess
                             else -> MaterialTheme.colorScheme.primary
                         }
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = when (state) {
-                            "idle" -> "Нажмите «Начать чтение» и поднесите карту"
-                            "waiting" -> "Поднесите карту к NFC..."
-                            "reading" -> "Чтение карты... ${(progress * 100).toInt()}%"
-                            "done" -> "Карта прочитана"
-                            "error" -> "Ошибка: $errorMsg"
-                            else -> state
+                        text = when {
+                            nfcState.value.scanning -> nfcState.value.message
+                            nfcState.value.error != null -> "Ошибка: ${nfcState.value.error}"
+                            readDump != null -> "Карта прочитана! UID: ${readDump.uid}"
+                            else -> "Поднесите карту к NFC-считывателю"
                         },
                         style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.Medium
                     )
-                    if (state == "reading") {
+                    if (nfcState.value.scanning) {
                         Spacer(modifier = Modifier.height(8.dp))
-                        LinearProgressIndicator(
-                            progress = { progress },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                    if (uid.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "UID: $uid | $sectorInfo",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                        )
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -121,43 +107,64 @@ fun ReadScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Кнопка чтения
-            if (state == "idle" || state == "error") {
-                Button(
+            Button(
+                onClick = {
+                    saved = false
+                    pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data ->
+                        readDump = data
+                        // Сохраняем в БД
+                        scope.launch {
+                            val entity = DumpEntity(
+                                uid = data.uid,
+                                uidBytes = data.uidBytes,
+                                blocks = data.blocks,
+                                label = "Карта ${data.uid}"
+                            )
+                            repository.saveDump(entity)
+                            saved = true
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                enabled = !nfcState.value.scanning
+            ) {
+                Icon(Icons.Filled.Nfc, null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Поднести карту к NFC")
+            }
+
+            // Имитация
+            if (!nfcState.value.scanning && readDump == null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
                     onClick = {
-                        state = "waiting"
-                        uid = ""
-                        dumpText = ""
-                        errorMsg = ""
+                        val sim = SimulationData.vizitDump
+                        readDump = MainActivity.ReadResultData(
+                            uid = sim.uid,
+                            uidBytes = sim.uidBytes,
+                            blocks = sim.blocks
+                        )
+                        scope.launch {
+                            repository.saveDump(sim)
+                            saved = true
+                        }
                     },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    enabled = state != "reading"
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Filled.Nfc, null)
+                    Icon(Icons.Filled.Science, null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (state == "error") "Повторить" else "Начать чтение",
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                    Text("Имитация: Ключ Vizit")
                 }
             }
 
             // Результат
-            if (dumpText.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "Дамп карты",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-
+            readDump?.let { dump ->
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Дамп карты", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Дамп в hex-виде
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
+                    modifier = Modifier.fillMaxWidth().weight(1f)
                 ) {
                     LazyColumn(
                         modifier = Modifier
@@ -165,45 +172,40 @@ fun ReadScreen(
                             .padding(8.dp)
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
                     ) {
-                        val lines = dumpText.lines().filter { it.isNotBlank() }
+                        val lines = dump.blocks.chunked(16).mapIndexed { i, block ->
+                            val hex = block.joinToString(" ") { "%02X".format(it) }
+                            val ascii = block.joinToString("") {
+                                if (it in 0x20..0x7E) it.toChar().toString() else "."
+                            }
+                            "Block %02X:  $hex  | $ascii".format(i)
+                        }
                         itemsIndexed(lines) { index, line ->
                             val isTrailer = (index + 1) % 4 == 0
                             Text(
                                 text = line,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                color = if (isTrailer)
-                                    MaterialTheme.colorScheme.secondary
-                                else
-                                    MaterialTheme.colorScheme.onSurface,
+                                fontSize = 10.sp,
+                                color = if (isTrailer) MaterialTheme.colorScheme.secondary
+                                else MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.padding(vertical = 1.dp)
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = if (saved) "✅ Дамп сохранён в БД" else "Сохранение...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = NfcSuccess
+                )
 
-                // Кнопки действий
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = { onCardRead(emptyList()) },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Filled.Save, null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Сохранить дамп")
-                    }
-                    OutlinedButton(
-                        onClick = onBack,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Filled.Close, null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
+                    OutlinedButton(onClick = { readDump = null }) {
                         Text("Закрыть")
                     }
                 }

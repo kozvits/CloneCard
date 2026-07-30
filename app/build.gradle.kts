@@ -55,6 +55,8 @@ dependencies {
     // Core
     implementation(libs.core.ktx)
     implementation(libs.lifecycle.runtime.ktx)
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation(libs.activity.compose)
 
     // Compose BOM

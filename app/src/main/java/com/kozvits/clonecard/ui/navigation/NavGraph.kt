@@ -1,62 +1,85 @@
 package com.kozvits.clonecard.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import com.kozvits.clonecard.MainActivity
+import com.kozvits.clonecard.data.repository.DumpRepository
 import com.kozvits.clonecard.ui.screens.*
+import kotlinx.coroutines.CoroutineScope
 
 @Composable
-fun NavGraph(navController: NavHostController) {
+fun NavGraph(
+    navController: NavHostController,
+    repository: DumpRepository,
+    activity: MainActivity,
+    nfcState: MutableState<MainActivity.NfcStatus>,
+    pendingAction: MutableState<MainActivity.PendingNfcAction?>,
+    scope: CoroutineScope
+) {
     NavHost(
         navController = navController,
         startDestination = Screen.Home.route
     ) {
-        // Главная
         composable(Screen.Home.route) {
             HomeScreen(
-                onNavigate = { route -> navController.navigate(route) }
+                onNavigate = { route -> navController.navigate(route) },
+                nfcState = nfcState,
+                activity = activity,
+                pendingAction = pendingAction,
+                scope = scope
             )
         }
 
-        // Чтение
         composable(Screen.Read.route) {
             ReadScreen(
                 onBack = { navController.popBackStack() },
-                onCardRead = { _ ->
-                    navController.popBackStack()
-                }
+                repository = repository,
+                activity = activity,
+                nfcState = nfcState,
+                pendingAction = pendingAction,
+                scope = scope
             )
         }
 
-        // Клонирование
         composable(Screen.Clone.route) {
             CloneScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                repository = repository,
+                activity = activity,
+                nfcState = nfcState,
+                pendingAction = pendingAction,
+                scope = scope
             )
         }
 
-        // Сравнение
         composable(Screen.Compare.route) {
             CompareScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                repository = repository,
+                activity = activity,
+                nfcState = nfcState,
+                pendingAction = pendingAction,
+                scope = scope
             )
         }
 
-        // Дампы
         composable(Screen.Dumps.route) {
             DumpsScreen(
                 onBack = { navController.popBackStack() },
                 onDumpClick = { id ->
                     navController.navigate(Screen.DumpDetail.createRoute(id))
                 },
-                onDumpDelete = { _ -> }
+                repository = repository,
+                scope = scope
             )
         }
 
-        // Детали дампа
         composable(
             route = Screen.DumpDetail.route,
             arguments = listOf(navArgument("dumpId") { type = NavType.LongType })
@@ -68,12 +91,18 @@ fun NavGraph(navController: NavHostController) {
                 onWrite = { id ->
                     navController.navigate(Screen.Write.createRoute(id))
                 },
-                onCompare = { _ -> },
-                onDelete = { _ -> navController.popBackStack() }
+                onDelete = { id ->
+                    scope.run { kotlinx.coroutines.GlobalScope.launch { repository.deleteDumpById(id) } }
+                    navController.popBackStack()
+                },
+                repository = repository,
+                scope = scope,
+                activity = activity,
+                pendingAction = pendingAction,
+                nfcState = nfcState
             )
         }
 
-        // Запись
         composable(
             route = Screen.Write.route,
             arguments = listOf(navArgument("dumpId") {
@@ -83,14 +112,24 @@ fun NavGraph(navController: NavHostController) {
         ) { backStackEntry ->
             val dumpId = backStackEntry.arguments?.getLong("dumpId") ?: -1L
             CloneScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                repository = repository,
+                activity = activity,
+                nfcState = nfcState,
+                pendingAction = pendingAction,
+                scope = scope,
+                preSelectedDumpId = dumpId
             )
         }
 
-        // Настройки
         composable(Screen.Settings.route) {
             SettingsScreen(
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                repository = repository,
+                scope = scope,
+                activity = activity,
+                pendingAction = pendingAction,
+                nfcState = nfcState
             )
         }
     }

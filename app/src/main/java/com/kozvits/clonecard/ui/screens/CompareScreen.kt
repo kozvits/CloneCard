@@ -1,9 +1,6 @@
 package com.kozvits.clonecard.ui.screens
 
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -16,20 +13,29 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kozvits.clonecard.MainActivity
+import com.kozvits.clonecard.data.SimulationData
+import com.kozvits.clonecard.data.db.DumpEntity
+import com.kozvits.clonecard.data.repository.DumpRepository
 import com.kozvits.clonecard.ui.theme.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CompareScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    repository: DumpRepository,
+    activity: MainActivity,
+    nfcState: MutableState<MainActivity.NfcStatus>,
+    pendingAction: MutableState<MainActivity.PendingNfcAction?>,
+    scope: CoroutineScope
 ) {
-    var mode by remember { mutableStateOf("card_card") } // card_card, card_dump, dump_dump
-    var card1Uid by remember { mutableStateOf("") }
-    var card2Uid by remember { mutableStateOf("") }
+    var leftDump by remember { mutableStateOf<DumpEntity?>(null) }
+    var rightDump by remember { mutableStateOf<DumpEntity?>(null) }
     var compareResult by remember { mutableStateOf("") }
     var matchPercent by remember { mutableFloatStateOf(0f) }
-    var diffBlocks by remember { mutableStateOf(listOf<Int>()) }
-    var showDiffOnly by remember { mutableStateOf(false) }
+    var showDumpPicker by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -49,68 +55,79 @@ fun CompareScreen(
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            // Выбор режима
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = mode == "card_card",
-                    onClick = { mode = "card_card" },
-                    label = { Text("Карта vs Карта") },
-                    leadingIcon = { Icon(Icons.Filled.Nfc, null, modifier = Modifier.size(18.dp)) }
-                )
-                FilterChip(
-                    selected = mode == "card_dump",
-                    onClick = { mode = "card_dump" },
-                    label = { Text("Карта vs Дамп") },
-                    leadingIcon = { Icon(Icons.Filled.Description, null, modifier = Modifier.size(18.dp)) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Панели для ввода
+            // Панель 1
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Icon(Icons.Filled.Nfc, null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Карта 1", style = MaterialTheme.typography.titleSmall)
-                    if (card1Uid.isNotEmpty()) {
-                        Text("UID: $card1Uid", style = MaterialTheme.typography.bodySmall)
+                    Text("Дамп A", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    if (leftDump != null) {
+                        Text("UID: ${leftDump!!.uid}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                        Text(leftDump!!.label.ifEmpty { "Без имени" }, style = MaterialTheme.typography.bodySmall)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(onClick = { card1Uid = "A2 33 0B 2A" }) {
-                        Icon(Icons.Filled.Nfc, null, modifier = Modifier.size(18.dp))
-                        Text("Считать карту 1")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                repository.allDumps.collect { dumps ->
+                                    if (dumps.isNotEmpty()) {
+                                        leftDump = dumps.first()
+                                    }
+                                }
+                            }
+                        }) {
+                            Icon(Icons.Filled.Folder, null, modifier = Modifier.size(18.dp))
+                            Text("Из дампов")
+                        }
+                        OutlinedButton(onClick = {
+                            leftDump = SimulationData.vizitDump
+                        }) {
+                            Icon(Icons.Filled.Science, null, modifier = Modifier.size(18.dp))
+                            Text("Имитация")
+                        }
+                        OutlinedButton(onClick = {
+                            pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data ->
+                                leftDump = DumpEntity(uid = data.uid, uidBytes = data.uidBytes, blocks = data.blocks, label = "Карта A")
+                            }
+                        }) {
+                            Icon(Icons.Filled.Nfc, null, modifier = Modifier.size(18.dp))
+                        }
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // Панель 2
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Nfc, null, tint = MaterialTheme.colorScheme.secondary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        if (mode == "card_card") {
-                            Text("Карта 2", style = MaterialTheme.typography.titleSmall)
-                        } else {
-                            Text("Дамп из файла", style = MaterialTheme.typography.titleSmall)
-                        }
-                    }
-                    if (card2Uid.isNotEmpty()) {
-                        Text("UID: $card2Uid", style = MaterialTheme.typography.bodySmall)
+                    Text("Дамп B", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    if (rightDump != null) {
+                        Text("UID: ${rightDump!!.uid}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                        Text(rightDump!!.label.ifEmpty { "Без имени" }, style = MaterialTheme.typography.bodySmall)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(onClick = { card2Uid = if (mode == "card_card") "A2 33 0B 2A" else "A2 33 0B 2A" }) {
-                        Icon(
-                            if (mode == "card_card") Icons.Filled.Nfc else Icons.Filled.FolderOpen,
-                            null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(if (mode == "card_card") "Считать карту 2" else "Выбрать файл дампа")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = {
+                            scope.launch {
+                                repository.allDumps.collect { dumps ->
+                                    if (dumps.size > 1) rightDump = dumps[1]
+                                    else if (dumps.isNotEmpty()) rightDump = dumps.first()
+                                }
+                            }
+                        }) {
+                            Icon(Icons.Filled.Folder, null, modifier = Modifier.size(18.dp))
+                            Text("Из дампов")
+                        }
+                        OutlinedButton(onClick = { rightDump = SimulationData.magicDump }) {
+                            Icon(Icons.Filled.Science, null, modifier = Modifier.size(18.dp))
+                            Text("Имитация")
+                        }
+                        OutlinedButton(onClick = {
+                            pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data ->
+                                rightDump = DumpEntity(uid = data.uid, uidBytes = data.uidBytes, blocks = data.blocks, label = "Карта B")
+                            }
+                        }) {
+                            Icon(Icons.Filled.Nfc, null, modifier = Modifier.size(18.dp))
+                        }
                     }
                 }
             }
@@ -118,26 +135,39 @@ fun CompareScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Кнопка сравнения
-            val canCompare = card1Uid.isNotEmpty() && card2Uid.isNotEmpty()
             Button(
                 onClick = {
-                    val uidSame = card1Uid == card2Uid
-                    val total = 48
-                    val match = if (uidSame) total else total - 1
-                    matchPercent = match.toFloat() / total * 100f
-                    diffBlocks = if (uidSame) emptyList() else listOf(0)
+                    val left = leftDump ?: return@Button
+                    val right = rightDump ?: return@Button
+
+                    val minLen = minOf(left.blocks.size, right.blocks.size)
+                    val match = (0 until minLen).count { left.blocks[it] == right.blocks[it] }
+                    matchPercent = if (minLen > 0) match.toFloat() / minLen * 100f else 0f
+
+                    val uidMatch = left.uid == right.uid
+                    val diffBlocks = mutableListOf<Int>()
+                    for (i in 0 until minOf(64, minLen / 16)) {
+                        val leftBlock = left.blocks.drop(i * 16).take(16)
+                        val rightBlock = right.blocks.drop(i * 16).take(16)
+                        if (leftBlock != rightBlock) diffBlocks.add(i)
+                    }
+
                     compareResult = buildString {
-                        appendLine("Сравнение карт:")
-                        appendLine("  UID 1: $card1Uid")
-                        appendLine("  UID 2: $card2Uid")
-                        appendLine("  Совпадение UID: ${if (uidSame) "✅ Да" else "❌ Нет"}")
-                        appendLine("  Блоки данных: $match/$total (${"%.1f".format(matchPercent)}%)")
-                        if (!uidSame) appendLine("  Различается блок 0 (UID)")
-                        appendLine(if (uidSame) "✅ Карты идентичны!" else "⚠ UID различается — клон не идентичен")
+                        appendLine("Сравнение дампов:")
+                        appendLine()
+                        appendLine("UID A: ${left.uid}")
+                        appendLine("UID B: ${right.uid}")
+                        appendLine("Совпадение UID: ${if (uidMatch) "✅ Да" else "❌ Нет"}")
+                        appendLine()
+                        appendLine("Совпадение блоков данных: $match/$minLen байт (${"%.1f".format(matchPercent)}%)")
+                        appendLine("Различающиеся блоки: ${diffBlocks.joinToString(", ")}")
+                        appendLine()
+                        appendLine(if (match == minLen && uidMatch) "✅ Дампы идентичны!"
+                        else "⚠ Дампы различаются")
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = canCompare
+                enabled = leftDump != null && rightDump != null
             ) {
                 Icon(Icons.Filled.CompareArrows, null)
                 Spacer(modifier = Modifier.width(8.dp))
@@ -147,50 +177,21 @@ fun CompareScreen(
             // Результат
             if (compareResult.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(16.dp))
-
-                // Прогресс совпадения
-                Text(
-                    text = "Совпадение: ${"%.1f".format(matchPercent)}%",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Text("Совпадение: ${"%.1f".format(matchPercent)}%", style = MaterialTheme.typography.titleSmall)
                 Spacer(modifier = Modifier.height(4.dp))
                 LinearProgressIndicator(
                     progress = { matchPercent / 100f },
                     modifier = Modifier.fillMaxWidth().height(8.dp),
-                    color = if (matchPercent == 100f) NfcSuccess else if (matchPercent > 90f) Warning else NfcError,
+                    color = if (matchPercent >= 100f) NfcSuccess else if (matchPercent > 90f) Warning else NfcError,
                     trackColor = MaterialTheme.colorScheme.surfaceVariant
                 )
-
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Текстовый результат
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                ) {
+                Card(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(12.dp)
-                            .verticalScroll(rememberScrollState())
+                        modifier = Modifier.fillMaxSize().padding(12.dp).verticalScroll(rememberScrollState())
                     ) {
-                        Text(
-                            text = compareResult,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-
-                // Переключатель "только различия"
-                if (diffBlocks.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = showDiffOnly, onCheckedChange = { showDiffOnly = it })
-                        Text("Показать только различия")
+                        Text(compareResult, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                     }
                 }
             }

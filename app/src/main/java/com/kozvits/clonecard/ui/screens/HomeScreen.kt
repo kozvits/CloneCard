@@ -7,14 +7,18 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.kozvits.clonecard.MainActivity
 import com.kozvits.clonecard.ui.navigation.Screen
+import com.kozvits.clonecard.ui.theme.NfcReady
+import com.kozvits.clonecard.ui.theme.NfcScanning
+import kotlinx.coroutines.CoroutineScope
 
 data class MenuCard(
     val title: String,
@@ -25,24 +29,26 @@ data class MenuCard(
 )
 
 private val menuItems = listOf(
-    MenuCard("Считать карту", "Чтение UID, блоков, секторов", Icons.Filled.Nfc, Screen.Read.route),
-    MenuCard("Клонировать", "Мастер: чтение → запись клона", Icons.Filled.ContentCopy, Screen.Clone.route),
-    MenuCard("Сравнить", "Карта vs карта или дамп", Icons.Filled.CompareArrows, Screen.Compare.route),
-    MenuCard("Дампы", "Управление сохранёнными дампами", Icons.Filled.Folder, Screen.Dumps.route),
-    MenuCard("Настройки", "Ключи, безопасность, экспорт", Icons.Filled.Settings, Screen.Settings.route),
+    MenuCard("Считать карту", "Чтение UID и полного дампа", Icons.Filled.Nfc, Screen.Read.route),
+    MenuCard("Клонировать", "Мастер: чтение → запись → верификация", Icons.Filled.ContentCopy, Screen.Clone.route),
+    MenuCard("Сравнить", "Карта vs дамп или два дампа", Icons.Filled.CompareArrows, Screen.Compare.route),
+    MenuCard("Дампы", "Сохранённые, импорт/экспорт", Icons.Filled.Folder, Screen.Dumps.route),
+    MenuCard("Настройки", "Режимы, очистка, симуляция", Icons.Filled.Settings, Screen.Settings.route),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    onNavigate: (String) -> Unit
+    onNavigate: (String) -> Unit,
+    nfcState: MutableState<MainActivity.NfcStatus>,
+    activity: MainActivity,
+    pendingAction: MutableState<MainActivity.PendingNfcAction?>,
+    scope: CoroutineScope
 ) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text("CloneCard", fontWeight = FontWeight.Bold)
-                },
+                title = { Text("CloneCard", fontWeight = FontWeight.Bold) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
@@ -56,27 +62,44 @@ fun HomeScreen(
                 .padding(padding)
                 .padding(16.dp)
         ) {
-            // Приветственная карточка
+            // NFC статус
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                    containerColor = if (nfcState.value.scanning)
+                        NfcScanning.copy(alpha = 0.15f)
+                    else
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
                 )
             ) {
-                Column(
-                    modifier = Modifier.padding(20.dp)
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Добро пожаловать в CloneCard",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                    Icon(
+                        imageVector = if (nfcState.value.scanning) Icons.Filled.Sync
+                        else if (nfcState.value.error != null) Icons.Filled.Error
+                        else Icons.Filled.Nfc,
+                        contentDescription = null,
+                        tint = if (nfcState.value.scanning) NfcScanning
+                        else NfcReady,
+                        modifier = Modifier.size(32.dp)
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Работа с MIFARE Classic картами: чтение, запись, клонирование, сравнение дампов.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = nfcState.value.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        if (nfcState.value.dump != null) {
+                            Text(
+                                text = "UID: ${nfcState.value.dump.uid}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -90,60 +113,51 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Сетка функций
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 160.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(menuItems) { item ->
-                    MenuActionCard(item, onClick = { onNavigate(item.route) })
+                    Card(
+                        onClick = { onNavigate(item.route) },
+                        modifier = Modifier.height(150.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = item.icon,
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp),
+                                tint = item.color
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = item.subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun MenuActionCard(
-    item: MenuCard,
-    onClick: () -> Unit
-) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier.height(150.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                imageVector = item.icon,
-                contentDescription = null,
-                modifier = Modifier.size(40.dp),
-                tint = item.color
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = item.title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = item.subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-            )
         }
     }
 }

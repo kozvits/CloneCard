@@ -11,16 +11,68 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.kozvits.clonecard.MainActivity
+import com.kozvits.clonecard.data.SimulationData
+import com.kozvits.clonecard.data.repository.DumpRepository
+import com.kozvits.clonecard.ui.theme.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    repository: DumpRepository,
+    scope: CoroutineScope,
+    activity: MainActivity? = null,
+    pendingAction: MutableState<MainActivity.PendingNfcAction?>? = null,
+    nfcState: MutableState<MainActivity.NfcStatus>? = null
 ) {
     var writeUnsafe by remember { mutableStateOf(true) }
-    var safeMode by remember { mutableStateOf(true) }
-    var useKeyB by remember { mutableStateOf(true) }
-    var debugMode by remember { mutableStateOf(false) }
+    var showEraseConfirm by remember { mutableStateOf(false) }
+    var showResetSimConfirm by remember { mutableStateOf(false) }
+    var statusMsg by remember { mutableStateOf("") }
+
+    if (showEraseConfirm) {
+        AlertDialog(
+            onDismissRequest = { showEraseConfirm = false },
+            title = { Text("Очистка карты") },
+            text = { Text("Поднесите карту к NFC. Все блоки (кроме UID) будут заполнены нулями, ключи сброшены на FF.") },
+            confirmButton = {
+                Button(onClick = {
+                    showEraseConfirm = false
+                    statusMsg = "Поднесите карту к NFC для очистки..."
+                    pendingAction?.value = MainActivity.PendingNfcAction.EraseCard { ok ->
+                        statusMsg = if (ok) "Карта очищена успешно" else "Ошибка очистки карты"
+                    }
+                }) { Text("Поднести карту") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showEraseConfirm = false }) { Text("Отмена") }
+            }
+        )
+    }
+
+    if (showResetSimConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetSimConfirm = false },
+            title = { Text("Сброс симуляции?") },
+            text = { Text("Удалить все текущие симуляции и создать новые.") },
+            confirmButton = {
+                Button(onClick = {
+                    scope.launch {
+                        repository.deleteSimulationDumps()
+                        repository.saveDumps(SimulationData.defaultDumps)
+                        statusMsg = "Симуляции сброшены"
+                    }
+                    showResetSimConfirm = false
+                }) { Text("Сбросить") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showResetSimConfirm = false }) { Text("Отмена") }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -41,7 +93,64 @@ fun SettingsScreen(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            // Режимы записи
+            if (statusMsg.isNotEmpty()) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = NfcSuccess.copy(alpha = 0.15f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.CheckCircle, null, tint = NfcSuccess)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(statusMsg)
+                    }
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // === ОЧИСТКА КАРТЫ ===
+            Text(
+                "Очистка карты",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = NfcError.copy(alpha = 0.08f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Функция очистки карты",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        "Записывает на карту чистый дамп: все блоки данных нулевые, ключи FF.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = { showEraseConfirm = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = NfcError),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.DeleteForever, null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("ОЧИСТИТЬ КАРТУ")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // === РЕЖИМЫ ЗАПИСИ ===
             Text(
                 "Режимы записи",
                 style = MaterialTheme.typography.titleMedium,
@@ -78,30 +187,44 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                         }
-                        Switch(checked = safeMode, onCheckedChange = { safeMode = it })
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Приоритет KeyB", style = MaterialTheme.typography.bodyLarge)
-                            Text("Сначала пробовать KeyB (для китайских клонов)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                        }
-                        Switch(checked = useKeyB, onCheckedChange = { useKeyB = it })
+                        Switch(checked = true, onCheckedChange = {})
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Ключи по умолчанию
+            // === СИМУЛЯЦИЯ ===
+            Text(
+                "Симуляция",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Дампы для имитации работы без физической карты.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { showResetSimConfirm = true },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(18.dp))
+                            Text("Сбросить симуляции")
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // === КЛЮЧИ ===
             Text(
                 "Ключи аутентификации",
                 style = MaterialTheme.typography.titleMedium,
@@ -111,14 +234,13 @@ fun SettingsScreen(
 
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    val defaultKeys = listOf(
+                    listOf(
                         "FF FF FF FF FF FF (заводской)",
                         "00 00 00 00 00 00",
                         "A0 A1 A2 A3 A4 A5",
                         "D3 F7 D3 F7 D3 F7",
                         "B0 B1 B2 B3 B4 B5",
-                    )
-                    defaultKeys.forEach { key ->
+                    ).forEach { key ->
                         Text(
                             text = key,
                             style = MaterialTheme.typography.bodySmall,
@@ -126,58 +248,12 @@ fun SettingsScreen(
                             modifier = Modifier.padding(vertical = 2.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = { /* управление ключами */ },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp))
-                        Text("Добавить пользовательский ключ")
-                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Прочее
-            Text(
-                "Прочее",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Режим отладки", style = MaterialTheme.typography.bodyLarge)
-                            Text("Hex-дамп всех секторов",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                        }
-                        Switch(checked = debugMode, onCheckedChange = { debugMode = it })
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                    OutlinedButton(
-                        onClick = { /* экспорт в JSON */ },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Filled.IosShare, null, modifier = Modifier.size(18.dp))
-                        Text("Экспорт всех дампов")
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // О программе
+            // === О ПРОГРАММЕ ===
             Text(
                 "О программе",
                 style = MaterialTheme.typography.titleMedium,
@@ -191,10 +267,13 @@ fun SettingsScreen(
                     Text("Работа с MIFARE Classic картами: чтение, запись, клонирование",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("За основу взят опыт работы с ACR122U на Windows (PC/SC через pyscard).",
+                    Text("Room DB | NFC Foreground Dispatch | Jetpack Compose",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("github.com/kozvits/CloneCard",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary)
                 }
             }
         }

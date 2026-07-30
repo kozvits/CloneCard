@@ -11,26 +11,44 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.kozvits.clonecard.MainActivity
+import com.kozvits.clonecard.data.SimulationData
+import com.kozvits.clonecard.data.db.DumpEntity
+import com.kozvits.clonecard.data.repository.DumpRepository
 import com.kozvits.clonecard.ui.theme.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CloneScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    repository: DumpRepository,
+    activity: MainActivity,
+    nfcState: MutableState<MainActivity.NfcStatus>,
+    pendingAction: MutableState<MainActivity.PendingNfcAction?>,
+    scope: CoroutineScope,
+    preSelectedDumpId: Long = -1L
 ) {
     var step by remember { mutableIntStateOf(0) }
-    var sourceUid by remember { mutableStateOf("") }
-    var sourceDump by remember { mutableStateOf("") }
+    var sourceDump by remember { mutableStateOf<DumpEntity?>(null) }
     var targetUid by remember { mutableStateOf("") }
-    var cloneResult by remember { mutableStateOf("") }
-    var verifyResult by remember { mutableStateOf("") }
     var writeUnsafe by remember { mutableStateOf(true) }
+    var cloneResult by remember { mutableStateOf("") }
+    var verifyOk by remember { mutableStateOf(false) }
+
+    // Загружаем дамп если передан ID
+    LaunchedEffect(preSelectedDumpId) {
+        if (preSelectedDumpId > 0) {
+            sourceDump = repository.getDumpById(preSelectedDumpId)
+            if (sourceDump != null) step = 1
+        }
+    }
 
     val steps = listOf(
-        "Приложите ОРИГИНАЛ карты для чтения",
-        "Проверка дампа оригинала",
-        "Приложите ЦЕЛЕВУЮ карту для записи",
-        "Запись клона...",
+        "Выбор источника",
+        "Проверка дампа",
+        "Запись на карту",
         "Верификация",
         "Готово!"
     )
@@ -73,124 +91,211 @@ fun CloneScreen(
                             },
                             modifier = Modifier.size(8.dp)
                         ) {}
-                        if (i < steps.size - 1) {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = (i + 1).toString(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                            )
-                        }
+                        Text(
+                            text = s,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (i <= step) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                        )
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Текущий шаг
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                )
-            ) {
-                Row(
-                    modifier = Modifier.padding(20.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = when (step) {
-                            0, 2 -> Icons.Filled.Nfc
-                            1 -> Icons.Filled.Description
-                            3 -> Icons.Filled.Edit
-                            4 -> Icons.Filled.Verified
-                            else -> Icons.Filled.CheckCircle
-                        },
-                        contentDescription = null,
-                        modifier = Modifier.size(32.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column {
-                        Text(
-                            text = "Шаг ${step + 1} из ${steps.size}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                        Text(
-                            text = steps[step],
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Контент шага
+            // Контент
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
             ) {
                 when (step) {
-                    0 -> StepCard("Оригинал", sourceUid, sourceDump) {
-                        Text("Поднесите оригинальную карту к NFC-считывателю телефона.")
+                    0 -> {
+                        Text(
+                            "Выберите источник для клонирования",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Из дампов
+                        Card(
+                            onClick = {
+                                scope.launch {
+                                    repository.allDumps.collect { dumps ->
+                                        if (dumps.isNotEmpty()) {
+                                            sourceDump = dumps.first()
+                                            step = 1
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Folder, null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("Из сохранённых дампов", fontWeight = FontWeight.Medium)
+                                    Text("Выбрать из ранее прочитанных", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(8.dp))
-                        sourceUid = "A2 33 0B 2A"
-                        sourceDump = "Данные прочитаны (1024 байт)"
-                    }
-                    1 -> StepCard("Дамп оригинала", sourceUid, sourceDump) {
-                        Text("UID: A2 33 0B 2A")
-                        Text("Тип: MIFARE Classic 1K, UID-only")
+
+                        // С имитацией
+                        Card(
+                            onClick = {
+                                sourceDump = SimulationData.vizitDump
+                                step = 1
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Science, null, tint = Warning)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("Имитация: Ключ Vizit", fontWeight = FontWeight.Medium)
+                                    Text("UID: A2 33 0B 2A", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+
                         Spacer(modifier = Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = writeUnsafe, onCheckedChange = { writeUnsafe = it })
-                            Text("Запись UID (--unsafe)")
+
+                        // Через NFC
+                        Card(
+                            onClick = {
+                                pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data ->
+                                    sourceDump = DumpEntity(uid = data.uid, uidBytes = data.uidBytes, blocks = data.blocks, label = "Клон ${data.uid}")
+                                    step = 1
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Filled.Nfc, null, tint = NfcReady)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("Считать через NFC", fontWeight = FontWeight.Medium)
+                                    Text("Поднести оригинал карты к телефону", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
                         }
                     }
-                    2 -> StepCard("Целевая карта", targetUid, "") {
-                        Text("Поднесите чистую карту к NFC-считывателю.")
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Текущий UID: $targetUid")
-                        if (targetUid.isEmpty()) {
-                            Text("UID будет отображён после чтения карты",
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                            )
-                        }
-                    }
-                    3 -> {
-                        StepCard("Запись...", targetUid, "") {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+
+                    1 -> {
+                        sourceDump?.let { dump ->
+                            Text("Источник: ${dump.label}", style = MaterialTheme.typography.titleSmall)
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Запись дампа на целевую карту...")
-                        }
-                        cloneResult = "Записано: 63/64 блока (UID не записан)"
-                    }
-                    4 -> StepCard("Верификация", sourceUid, "") {
-                        Text("UID оригинала: A2 33 0B 2A")
-                        Text("UID клона:    $targetUid")
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Совпадение данных: 48/48 блоков")
-                        if (sourceUid == targetUid) {
-                            Text("✅ Клон идентичен оригиналу (включая UID)",
-                                color = NfcSuccess, fontWeight = FontWeight.Bold)
-                        } else {
-                            Text("⚠ UID различается. Если домофон UID-only — клон не сработает.",
-                                color = Warning)
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text("UID: ${dump.uid}", fontWeight = FontWeight.Bold)
+                                    Text("Блоков: ${dump.blocks.size / 16}")
+                                    if (dump.isMagicCard) Text("⚠ Magic Card", color = Warning)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(checked = writeUnsafe, onCheckedChange = { writeUnsafe = it })
+                                        Text("Запись UID (--unsafe)")
+                                    }
+                                }
+                            }
                         }
                     }
-                    5 -> {
+
+                    2 -> {
+                        Text(
+                            "Поднесите ЦЕЛЕВУЮ карту к NFC",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier.padding(20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                if (nfcState.value.scanning) {
+                                    CircularProgressIndicator()
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(nfcState.value.message)
+                                } else {
+                                    Icon(Icons.Filled.Nfc, null, modifier = Modifier.size(64.dp), tint = NfcReady)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Button(
+                                        onClick = {
+                                            sourceDump?.let { dump ->
+                                                pendingAction.value = MainActivity.PendingNfcAction.WriteCard(dump, writeUnsafe) { ok ->
+                                                    cloneResult = if (ok) "Запись выполнена" else "Запись с ошибками"
+                                                    step = 3
+                                                }
+                                            }
+                                        },
+                                        enabled = sourceDump != null
+                                    ) {
+                                        Text("Записать клон")
+                                    }
+                                }
+                            }
+                        }
+
+                        if (targetUid.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("UID цели: $targetUid", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+
+                    3 -> {
+                        sourceDump?.let { dump ->
+                            Text("Верификация", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Card(modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text("Источник: ${dump.uid}")
+                                    Text("Результат: $cloneResult")
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    Button(
+                                        onClick = {
+                                            pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data ->
+                                                val uidMatch = data.uid == dump.uid
+                                                verifyOk = uidMatch
+                                                if (uidMatch) step = 4
+                                                else cloneResult = "UID не совпадает! Оригинал: ${dump.uid}, Клон: ${data.uid}"
+                                            }
+                                        }
+                                    ) {
+                                        Icon(Icons.Filled.Verified, null)
+                                        Text("Проверить клон через NFC")
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            verifyOk = true
+                                            step = 4
+                                        }
+                                    ) {
+                                        Text("Пропустить верификацию")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    4 -> {
                         Icon(
-                            imageVector = Icons.Filled.CheckCircle,
+                            imageVector = if (verifyOk) Icons.Filled.CheckCircle else Icons.Filled.Warning,
                             contentDescription = null,
                             modifier = Modifier.size(80.dp).align(Alignment.CenterHorizontally),
-                            tint = NfcSuccess
+                            tint = if (verifyOk) NfcSuccess else Warning
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            "Клонирование завершено!",
+                            if (verifyOk) "Клонирование успешно!" else "Клонирование завершено",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -199,78 +304,21 @@ fun CloneScreen(
                             cloneResult,
                             modifier = Modifier.align(Alignment.CenterHorizontally)
                         )
-                        Text(
-                            verifyResult,
-                            modifier = Modifier.align(Alignment.CenterHorizontally)
-                        )
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Кнопки навигации
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                if (step > 0) {
-                    OutlinedButton(onClick = { step-- }) {
-                        Icon(Icons.Filled.ArrowBack, null)
-                        Text("Назад")
-                    }
-                } else { Spacer(modifier = Modifier.width(1.dp)) }
-
-                if (step < steps.size - 1) {
-                    Button(onClick = { step++ }) {
-                        Text("Далее")
-                        Icon(Icons.Filled.ArrowForward, null)
-                    }
-                } else {
-                    Button(onClick = onBack) {
-                        Icon(Icons.Filled.Home, null)
-                        Text("На главную")
-                    }
-                }
+                if (step > 0) OutlinedButton(onClick = { step-- }) { Text("Назад") }
+                else Spacer(modifier = Modifier.width(1.dp))
+                if (step < steps.size - 1) Button(onClick = { step++ }, enabled = sourceDump != null) { Text("Пропустить →") }
+                else Button(onClick = onBack) { Text("На главную") }
             }
-        }
-    }
-}
-
-@Composable
-private fun StepCard(
-    title: String,
-    uid: String,
-    dumpInfo: String,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            if (uid.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "UID: $uid",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            if (dumpInfo.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = dumpInfo,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            content()
         }
     }
 }
