@@ -37,6 +37,9 @@ fun CompareScreen(
     var compareResult by remember { mutableStateOf("") }
     var matchPercent by remember { mutableFloatStateOf(0f) }
     var showDumpPicker by remember { mutableStateOf(false) }
+    // Режим «считать обе карты»: 1-я → A, 2-я → B
+    var bothMode by remember { mutableStateOf(false) }
+    var bothModeState by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
@@ -129,6 +132,72 @@ fun CompareScreen(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            // === СЧИТАТЬ ОБЕ КАРТЫ ПО NFC ===
+            Button(
+                onClick = {
+                    leftDump = null
+                    rightDump = null
+                    compareResult = ""
+                    bothMode = true
+                    bothModeState = "Поднесите карту A к NFC..."
+                    pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data ->
+                        leftDump = DumpEntity(
+                            uid = data.uid, uidBytes = data.uidBytes,
+                            blocks = data.blocks, label = "Карта A"
+                        )
+                        bothModeState = "Карта A: ${data.uid}. Поднесите карту B..."
+                        // Пере-взвод для второй карты
+                        pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data2 ->
+                            rightDump = DumpEntity(
+                                uid = data2.uid, uidBytes = data2.uidBytes,
+                                blocks = data2.blocks, label = "Карта B"
+                            )
+                            bothMode = false
+                            bothModeState = "Обе карты прочитаны. Нажмите «Сравнить»."
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+            ) {
+                Icon(Icons.Filled.Nfc, null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Считать обе карты по NFC")
+            }
+
+            // Статус режима «обе карты»
+            if (bothMode || bothModeState.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (nfcState.value.error != null) NfcError.copy(alpha = 0.12f)
+                        else NfcScanning.copy(alpha = 0.12f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (nfcState.value.scanning) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Filled.Nfc, null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            buildString {
+                                append(bothModeState)
+                                nfcState.value.error?.let { append("  ($it)") }
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Кнопка сравнения
             Button(
