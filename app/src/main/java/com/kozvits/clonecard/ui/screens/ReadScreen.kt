@@ -35,6 +35,26 @@ fun ReadScreen(
     var readDump by remember { mutableStateOf<MainActivity.ReadResultData?>(null) }
     var saved by remember { mutableStateOf(false) }
 
+    // Авто-взвод чтения: открыл экран → поднёс карту → карта читается.
+    // Повторный взвод после закрытия дампа (readDump = null).
+    LaunchedEffect(readDump) {
+        if (readDump == null) {
+            pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data ->
+                readDump = data
+                scope.launch {
+                    val entity = DumpEntity(
+                        uid = data.uid,
+                        uidBytes = data.uidBytes,
+                        blocks = data.blocks,
+                        label = "Карта ${data.uid}"
+                    )
+                    repository.saveDump(entity)
+                    saved = true
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(

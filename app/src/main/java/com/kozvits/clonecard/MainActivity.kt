@@ -142,8 +142,35 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNfcIntent(intent: Intent) {
-        val tag = nfcManager.resolveIntent(intent) ?: return
-        val action = pendingAction.value ?: return
+        android.util.Log.d("CloneCard", "NFC intent received: ${intent.action}")
+        val tag = nfcManager.resolveIntent(intent)
+        if (tag == null) {
+            android.util.Log.w("CloneCard", "Tag is null for action ${intent.action}")
+            nfcState.value = nfcState.value.copy(
+                scanning = false,
+                error = "Тег не распознан (${intent.action})",
+                message = "Неподдерживаемый тип карты"
+            )
+            return
+        }
+
+        val uidPreview = tag.id.joinToString(" ") { "%02X".format(it) }
+        android.util.Log.d("CloneCard", "Tag detected, UID=$uidPreview, techs=${tag.techList.joinToString(",")}")
+
+        val action = pendingAction.value
+        if (action == null) {
+            android.util.Log.w("CloneCard", "No pending action — card ignored")
+            Toast.makeText(this, "Карта обнаружена! Сначала выберите действие", Toast.LENGTH_SHORT).show()
+            nfcState.value = nfcState.value.copy(
+                scanning = false,
+                message = "Карта обнаружена. Выберите действие на экране.",
+                error = null
+            )
+            return
+        }
+
+        // Потребляем действие сразу — экраны взводят новое при необходимости
+        pendingAction.value = null
 
         when (action) {
             is PendingNfcAction.ReadCard -> {

@@ -167,6 +167,11 @@ fun CloneScreen(
                         // Через NFC
                         Card(
                             onClick = {
+                                nfcState.value = nfcState.value.copy(
+                                    scanning = false,
+                                    message = "Поднесите карту к NFC...",
+                                    error = null
+                                )
                                 pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data ->
                                     sourceDump = DumpEntity(uid = data.uid, uidBytes = data.uidBytes, blocks = data.blocks, label = "Клон ${data.uid}")
                                     step = 1
@@ -180,6 +185,59 @@ fun CloneScreen(
                                 Column {
                                     Text("Считать через NFC", fontWeight = FontWeight.Medium)
                                     Text("Поднести оригинал карты к телефону", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+
+                        // Статус NFC: показываем, что происходит после поднесения карты
+                        val nfcArmed = pendingAction.value is MainActivity.PendingNfcAction.ReadCard
+                        val showNfcStatus = nfcArmed || nfcState.value.scanning || nfcState.value.error != null
+                        if (showNfcStatus) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = when {
+                                        nfcState.value.scanning -> NfcScanning.copy(alpha = 0.15f)
+                                        nfcState.value.error != null -> NfcError.copy(alpha = 0.15f)
+                                        else -> NfcReady.copy(alpha = 0.15f)
+                                    }
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = when {
+                                            nfcState.value.scanning -> Icons.Filled.Sync
+                                            nfcState.value.error != null -> Icons.Filled.Error
+                                            else -> Icons.Filled.Nfc
+                                        },
+                                        contentDescription = null,
+                                        tint = when {
+                                            nfcState.value.scanning -> NfcScanning
+                                            nfcState.value.error != null -> NfcError
+                                            else -> NfcReady
+                                        }
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(
+                                            text = when {
+                                                nfcState.value.scanning -> nfcState.value.message
+                                                nfcState.value.error != null -> "Ошибка: ${nfcState.value.error}"
+                                                nfcArmed -> "Ожидание карты... Поднесите карту к телефону"
+                                                else -> nfcState.value.message
+                                            },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        if (nfcState.value.scanning) {
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                        }
+                                    }
                                 }
                             }
                         }

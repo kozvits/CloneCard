@@ -4,7 +4,14 @@ import android.app.Activity
 import android.content.Intent
 import android.nfc.NfcAdapter
 import android.nfc.Tag
+import android.nfc.tech.IsoDep
 import android.nfc.tech.MifareClassic
+import android.nfc.tech.Ndef
+import android.nfc.tech.NfcA
+import android.nfc.tech.NfcB
+import android.nfc.tech.NfcF
+import android.os.Build
+import android.util.Log
 
 /**
  * Управление NFC foreground dispatch.
@@ -25,7 +32,8 @@ class NfcManager(private val activity: Activity) {
     val isEnabled: Boolean get() = nfcAdapter?.isEnabled == true
 
     fun enableForegroundDispatch() {
-        nfcAdapter?.let { adapter ->
+        val adapter = nfcAdapter ?: return
+        try {
             val intent = Intent(activity.applicationContext, activity.javaClass)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
             val pendingIntent = android.app.PendingIntent.getActivity(
@@ -33,11 +41,20 @@ class NfcManager(private val activity: Activity) {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or
                         android.app.PendingIntent.FLAG_IMMUTABLE
             )
+            // Широкий набор tech-списков: ловим любую карту 13.56 МГц,
+            // а не только MIFARE Classic. Мэтчинг = "тег содержит ВСЕ tech из списка".
             val techLists = arrayOf(
                 arrayOf(MifareClassic::class.java.name),
-                arrayOf(android.nfc.tech.NfcA::class.java.name)
+                arrayOf(NfcA::class.java.name),
+                arrayOf(Ndef::class.java.name),
+                arrayOf(IsoDep::class.java.name),
+                arrayOf(NfcB::class.java.name),
+                arrayOf(NfcF::class.java.name),
             )
             adapter.enableForegroundDispatch(activity, pendingIntent, null, techLists)
+            Log.d("CloneCard", "Foreground dispatch enabled")
+        } catch (e: Exception) {
+            Log.e("CloneCard", "enableForegroundDispatch failed", e)
         }
     }
 
@@ -47,12 +64,26 @@ class NfcManager(private val activity: Activity) {
         } catch (_: Exception) {}
     }
 
-    fun resolveIntent(intent: Intent): Tag? {
-        return if (NfcAdapter.ACTION_TECH_DISCOVERED == intent.action ||
-            NfcAdapter.ACTION_TAG_DISCOVERED == intent.action
+    /**
+     * Достать Tag из intent. Обрабатывает все три NFC-действия.
+     * На Android 13+ используем типизированный getParcelableExtra,
+     * т.к. устаревший вариант может вернуть null.
+     */
+    fun resolveIntent(intent: Intent?): Tag? {
+        if (intent == null) return null
+        val action = intent.action
+        if (action != NfcAdapter.ACTION_NDEF_DISCOVERED &&
+            action != NfcAdapter.ACTION_TECH_DISCOVERED &&
+            action != NfcAdapter.ACTION_TAG_DISCOVERED
         ) {
+            return null
+        }
+        return if (Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(NfcAdapter.EXTRA_TAG, Tag::class.java)
+        } else {
+            @Suppress("DEPRECATION")
             intent.getParcelableExtra(NfcAdapter.EXTRA_TAG) as? Tag
-        } else null
+        }
     }
 
     companion object {

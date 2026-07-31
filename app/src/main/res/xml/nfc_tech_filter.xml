@@ -1,9 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Каждый tech-list матчится, если тег содержит ВСЕ его tech.
+         Раздельные списки = ловим любые карты 13.56 МГц. -->
     <tech-list>
         <tech>android.nfc.tech.MifareClassic</tech>
+    </tech-list>
+    <tech-list>
         <tech>android.nfc.tech.NfcA</tech>
+    </tech-list>
+    <tech-list>
         <tech>android.nfc.tech.Ndef</tech>
-        <tech>android.nfc.tech.NdefFormatable</tech>
+    </tech-list>
+    <tech-list>
+        <tech>android.nfc.tech.IsoDep</tech>
     </tech-list>
 </resources>
