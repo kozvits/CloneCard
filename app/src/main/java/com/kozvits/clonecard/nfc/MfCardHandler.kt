@@ -63,6 +63,7 @@ class MfCardHandler {
             byteArrayOf(0, 0, 0, 0, 0, 0),
             byteArrayOf((-96).toByte(), (-95).toByte(), (-94).toByte(), (-93).toByte(), (-92).toByte(), (-91).toByte()),    // A0 A1 A2 A3 A4 A5
             byteArrayOf((-45).toByte(), (-9).toByte(), (-45).toByte(), (-9).toByte(), (-45).toByte(), (-9).toByte()),       // D3 F7 D3 F7 D3 F7
+            byteArrayOf((-80).toByte(), (-79).toByte(), (-78).toByte(), (-77).toByte(), (-76).toByte(), (-75).toByte()),   // B0 B1 B2 B3 B4 B5
         )
         val authenticated = mutableSetOf<Int>()
 

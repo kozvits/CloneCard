@@ -17,6 +17,7 @@ import com.kozvits.clonecard.data.db.DumpEntity
 import com.kozvits.clonecard.data.repository.DumpRepository
 import com.kozvits.clonecard.ui.theme.*
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -122,11 +123,10 @@ fun CloneScreen(
                         Card(
                             onClick = {
                                 scope.launch {
-                                    repository.allDumps.collect { dumps ->
-                                        if (dumps.isNotEmpty()) {
-                                            sourceDump = dumps.first()
-                                            step = 1
-                                        }
+                                    val dumps = repository.allDumps.first()
+                                    if (dumps.isNotEmpty()) {
+                                        sourceDump = dumps.first()
+                                        step = 1
                                     }
                                 }
                             },

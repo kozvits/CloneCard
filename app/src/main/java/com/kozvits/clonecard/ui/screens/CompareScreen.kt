@@ -19,6 +19,7 @@ import com.kozvits.clonecard.data.db.DumpEntity
 import com.kozvits.clonecard.data.repository.DumpRepository
 import com.kozvits.clonecard.ui.theme.*
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -67,11 +68,7 @@ fun CompareScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = {
                             scope.launch {
-                                repository.allDumps.collect { dumps ->
-                                    if (dumps.isNotEmpty()) {
-                                        leftDump = dumps.first()
-                                    }
-                                }
+                                leftDump = repository.allDumps.first().firstOrNull()
                             }
                         }) {
                             Icon(Icons.Filled.Folder, null, modifier = Modifier.size(18.dp))
@@ -108,10 +105,9 @@ fun CompareScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = {
                             scope.launch {
-                                repository.allDumps.collect { dumps ->
-                                    if (dumps.size > 1) rightDump = dumps[1]
-                                    else if (dumps.isNotEmpty()) rightDump = dumps.first()
-                                }
+                                rightDump = repository.allDumps.first()
+                                    .drop(1).firstOrNull()
+                                    ?: repository.allDumps.first().firstOrNull()
                             }
                         }) {
                             Icon(Icons.Filled.Folder, null, modifier = Modifier.size(18.dp))

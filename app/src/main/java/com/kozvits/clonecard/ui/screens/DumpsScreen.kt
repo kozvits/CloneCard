@@ -1,5 +1,8 @@
 package com.kozvits.clonecard.ui.screens
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -9,12 +12,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.kozvits.clonecard.data.db.DumpEntity
 import com.kozvits.clonecard.data.repository.DumpRepository
 import com.kozvits.clonecard.ui.theme.*
+import com.kozvits.clonecard.util.ExportImportManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -31,6 +36,23 @@ fun DumpsScreen(
 ) {
     val dumps by repository.allDumps.collectAsState(initial = emptyList())
     val dateFormat = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()) }
+    val context = LocalContext.current
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val dump = ExportImportManager.readDumpFromUri(context, uri)
+                if (dump != null) {
+                    repository.saveDump(dump)
+                    Toast.makeText(context, "Дамп импортирован: ${dump.uid}", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Ошибка: неверный JSON-файл дампа", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -45,7 +67,7 @@ fun DumpsScreen(
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = { /* TODO: import from SAF */ },
+                onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
                 icon = { Icon(Icons.Filled.FileOpen, null) },
                 text = { Text("Импорт") }
             )
