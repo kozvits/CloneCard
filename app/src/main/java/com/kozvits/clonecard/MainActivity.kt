@@ -70,6 +70,11 @@ class MainActivity : ComponentActivity() {
             nfcState.value = nfcState.value.copy(message = "Включите NFC в настройках")
         }
 
+        // Холодный старт: приложение запущено поднесённой картой
+        if (nfcManager.isNfcAction(intent)) {
+            handleNfcIntent(intent)
+        }
+
         enableEdgeToEdge()
         setContent {
             val navController = rememberNavController()
@@ -142,15 +147,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNfcIntent(intent: Intent) {
-        android.util.Log.d("CloneCard", "NFC intent received: ${intent.action}")
+        val actionName = intent.action
+        val hasTagExtra = intent.hasExtra(NfcAdapter.EXTRA_TAG)
+        android.util.Log.d("CloneCard", "NFC intent: action=$actionName, hasExtra=$hasTagExtra")
         val tag = nfcManager.resolveIntent(intent)
         if (tag == null) {
-            android.util.Log.w("CloneCard", "Tag is null for action ${intent.action}")
-            nfcState.value = nfcState.value.copy(
-                scanning = false,
-                error = "Тег не распознан (${intent.action})",
-                message = "Неподдерживаемый тип карты"
-            )
+            // Ошибку показываем ТОЛЬКО для настоящих NFC-действий без тега.
+            // Мусорные интенты (MAIN, null action без EXTRA_TAG и т.п.) — молча.
+            if (nfcManager.isNfcAction(intent)) {
+                android.util.Log.w("CloneCard", "NFC action $actionName but Tag extra missing")
+                nfcState.value = nfcState.value.copy(
+                    scanning = false,
+                    error = "Тег не распознан ($actionName)",
+                    message = "Неподдерживаемый тип карты"
+                )
+            } else {
+                android.util.Log.w("CloneCard", "Non-NFC intent ignored: $actionName (hasExtra=$hasTagExtra)")
+            }
             return
         }
 

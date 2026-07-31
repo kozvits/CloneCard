@@ -36,8 +36,9 @@ fun ReadScreen(
     var saved by remember { mutableStateOf(false) }
 
     // Авто-взвод чтения: открыл экран → поднёс карту → карта читается.
-    // Повторный взвод после закрытия дампа (readDump = null).
-    LaunchedEffect(readDump) {
+    // Повторный взвод после закрытия дампа (readDump = null) и после
+    // ошибки чтения (nfcState.error != null — действие было потреблено).
+    LaunchedEffect(readDump, nfcState.value.error) {
         if (readDump == null) {
             pendingAction.value = MainActivity.PendingNfcAction.ReadCard { data ->
                 readDump = data

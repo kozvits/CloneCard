@@ -65,25 +65,30 @@ class NfcManager(private val activity: Activity) {
     }
 
     /**
-     * Достать Tag из intent. Обрабатывает все три NFC-действия.
+     * Достать Tag из intent.
      * На Android 13+ используем типизированный getParcelableExtra,
      * т.к. устаревший вариант может вернуть null.
+     *
+     * ВАЖНО: action НЕ проверяем — на некоторых прошивках (MIUI/HyperOS)
+     * foreground-dispatch интент приходит с пустым action, но с EXTRA_TAG.
+     * Тег извлекается напрямую; если его нет — это не NFC-интент.
      */
     fun resolveIntent(intent: Intent?): Tag? {
         if (intent == null) return null
-        val action = intent.action
-        if (action != NfcAdapter.ACTION_NDEF_DISCOVERED &&
-            action != NfcAdapter.ACTION_TECH_DISCOVERED &&
-            action != NfcAdapter.ACTION_TAG_DISCOVERED
-        ) {
-            return null
-        }
         return if (Build.VERSION.SDK_INT >= 33) {
             intent.getParcelableExtra(NfcAdapter.EXTRA_TAG, Tag::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra(NfcAdapter.EXTRA_TAG) as? Tag
         }
+    }
+
+    /** True, если action — одно из штатных NFC-действий */
+    fun isNfcAction(intent: Intent?): Boolean {
+        val action = intent?.action ?: return false
+        return action == NfcAdapter.ACTION_NDEF_DISCOVERED ||
+                action == NfcAdapter.ACTION_TECH_DISCOVERED ||
+                action == NfcAdapter.ACTION_TAG_DISCOVERED
     }
 
     companion object {
