@@ -23,6 +23,7 @@ import com.kozvits.clonecard.nfc.NfcManager
 import com.kozvits.clonecard.ui.navigation.NavGraph
 import com.kozvits.clonecard.ui.navigation.Screen
 import com.kozvits.clonecard.ui.theme.CloneCardTheme
+import com.kozvits.clonecard.util.NfcLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,6 +63,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         repository = DumpRepository.getInstance(this)
         nfcManager = NfcManager(this)
+        nfcManager.setTagListener { tag -> processTag(tag) }
 
         // Показываем NFC-статус при старте
         if (!nfcManager.isAvailable) {
@@ -130,6 +132,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (nfcManager.isAvailable) {
+            nfcManager.enableReaderMode()
             nfcManager.enableForegroundDispatch()
         }
     }
@@ -138,6 +141,7 @@ class MainActivity : ComponentActivity() {
         super.onPause()
         try {
             nfcManager.disableForegroundDispatch()
+            nfcManager.disableReaderMode()
         } catch (_: Exception) {}
     }
 
@@ -146,33 +150,47 @@ class MainActivity : ComponentActivity() {
         handleNfcIntent(intent)
     }
 
+    // Дедупликация: один и тот же тег может прийти дважды
+    // (reader mode + foreground dispatch одновременно)
+    private var lastTagUid = ""
+    private var lastTagTime = 0L
+
     private fun handleNfcIntent(intent: Intent) {
         val actionName = intent.action
         val hasTagExtra = intent.hasExtra(NfcAdapter.EXTRA_TAG)
-        android.util.Log.d("CloneCard", "NFC intent: action=$actionName, hasExtra=$hasTagExtra")
+        NfcLog.log("Интент: action=$actionName, tagExtra=$hasTagExtra")
         val tag = nfcManager.resolveIntent(intent)
         if (tag == null) {
-            // Ошибку показываем ТОЛЬКО для настоящих NFC-действий без тега.
-            // Мусорные интенты (MAIN, null action без EXTRA_TAG и т.п.) — молча.
             if (nfcManager.isNfcAction(intent)) {
-                android.util.Log.w("CloneCard", "NFC action $actionName but Tag extra missing")
+                NfcLog.log("ОШИБКА: NFC-действие $actionName, но тега в интенте нет")
                 nfcState.value = nfcState.value.copy(
                     scanning = false,
                     error = "Тег не распознан ($actionName)",
                     message = "Неподдерживаемый тип карты"
                 )
             } else {
-                android.util.Log.w("CloneCard", "Non-NFC intent ignored: $actionName (hasExtra=$hasTagExtra)")
+                NfcLog.log("Мусорный интент проигнорирован")
             }
             return
         }
+        processTag(tag)
+    }
 
-        val uidPreview = tag.id.joinToString(" ") { "%02X".format(it) }
-        android.util.Log.d("CloneCard", "Tag detected, UID=$uidPreview, techs=${tag.techList.joinToString(",")}")
+    /** Общая обработка тега из любого источника (reader mode / intent). */
+    private fun processTag(tag: Tag) {
+        val uidHex = tag.id.joinToString(" ") { "%02X".format(it) }
+        val now = System.currentTimeMillis()
+        if (uidHex == lastTagUid && now - lastTagTime < 2000) {
+            NfcLog.log("Дубликат тега (повторная доставка) — пропущен")
+            return
+        }
+        lastTagUid = uidHex
+        lastTagTime = now
+        NfcLog.log("ТЕГ: UID=$uidHex, techs=${tag.techList.joinToString(",")}")
 
         val action = pendingAction.value
         if (action == null) {
-            android.util.Log.w("CloneCard", "No pending action — card ignored")
+            NfcLog.log("Действие не выбрано — карта проигнорирована")
             Toast.makeText(this, "Карта обнаружена! Сначала выберите действие", Toast.LENGTH_SHORT).show()
             nfcState.value = nfcState.value.copy(
                 scanning = false,
@@ -187,15 +205,19 @@ class MainActivity : ComponentActivity() {
 
         when (action) {
             is PendingNfcAction.ReadCard -> {
+                NfcLog.log("Действие: Чтение карты")
                 readCardAsync(tag, action.onResult)
             }
             is PendingNfcAction.WriteCard -> {
+                NfcLog.log("Действие: Запись карты")
                 writeCardAsync(tag, action.dumpEntity, action.unsafe, action.onResult)
             }
             is PendingNfcAction.EraseCard -> {
+                NfcLog.log("Действие: Очистка карты")
                 eraseCardAsync(tag, action.onResult)
             }
             is PendingNfcAction.CompareCard -> {
+                NfcLog.log("Действие: Сравнение карт")
                 readCardAsync(tag, action.onResult)
             }
         }
@@ -204,8 +226,10 @@ class MainActivity : ComponentActivity() {
     private fun readCardAsync(tag: Tag, onResult: (ReadResultData) -> Unit) {
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             nfcState.value = nfcState.value.copy(scanning = true, message = "Чтение карты...")
+            NfcLog.log("Чтение: подключение к тегу...")
             try {
                 val uid = mfHandler.readUid(tag)
+                NfcLog.log("Чтение: UID получен, читаю блоки...")
                 val result = mfHandler.readCard(tag) { progress, msg ->
                     nfcState.value = nfcState.value.copy(
                         message = "Чтение: ${(progress * 100).toInt()}% — $msg"
@@ -213,6 +237,7 @@ class MainActivity : ComponentActivity() {
                 }
                 withContext(Dispatchers.Main) {
                     if (result != null) {
+                        NfcLog.log("Чтение: УСПЕХ, ${result.blocks.size} байт")
                         val data = ReadResultData(
                             uid = result.uidHex,
                             uidBytes = result.uid,
@@ -225,6 +250,7 @@ class MainActivity : ComponentActivity() {
                         )
                         onResult(data)
                     } else {
+                        NfcLog.log("Чтение: ОШИБКА — не удалось прочитать карту")
                         nfcState.value = nfcState.value.copy(
                             scanning = false,
                             error = "Не удалось прочитать карту",
@@ -233,6 +259,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             } catch (e: Exception) {
+                NfcLog.log("Чтение: ИСКЛЮЧЕНИЕ ${e.message}")
                 withContext(Dispatchers.Main) {
                     nfcState.value = nfcState.value.copy(
                         scanning = false,

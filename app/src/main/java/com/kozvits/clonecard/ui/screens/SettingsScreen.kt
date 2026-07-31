@@ -11,10 +11,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kozvits.clonecard.MainActivity
 import com.kozvits.clonecard.data.SimulationData
 import com.kozvits.clonecard.data.repository.DumpRepository
 import com.kozvits.clonecard.ui.theme.*
+import com.kozvits.clonecard.util.NfcLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -274,6 +276,53 @@ fun SettingsScreen(
                     Text("github.com/kozvits/CloneCard",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // === ДИАГНОСТИКА NFC ===
+            Text(
+                "Диагностика NFC",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        "Журнал NFC-событий: поднесите карту и посмотрите, что происходит.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { NfcLog.clear() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.DeleteSweep, null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Очистить журнал")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (NfcLog.entries.isEmpty()) {
+                        Text(
+                            "Пусто. Откройте экран чтения, нажмите кнопку чтения и поднесите карту.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        )
+                    } else {
+                        NfcLog.entries.forEach { line ->
+                            Text(
+                                text = line,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(vertical = 1.dp)
+                            )
+                        }
+                    }
                 }
             }
         }

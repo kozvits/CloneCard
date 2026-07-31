@@ -11,26 +11,68 @@ import android.nfc.tech.NfcA
 import android.nfc.tech.NfcB
 import android.nfc.tech.NfcF
 import android.os.Build
-import android.util.Log
+import com.kozvits.clonecard.util.NfcLog
 
 /**
- * Управление NFC foreground dispatch.
- * Позволяет Activity получать NFC-теги в режиме foreground.
+ * Управление NFC: Reader Mode (основной путь — тег приходит в колбэк,
+ * минуя интенты; надёжен на MIUI/HyperOS) + Foreground Dispatch (резерв).
  */
-class NfcManager(private val activity: Activity) {
+class NfcManager(private val activity: Activity) : NfcAdapter.ReaderCallback {
 
     private var nfcAdapter: NfcAdapter? = null
+    private var tagListener: ((Tag) -> Unit)? = null
+    private var foregroundActive = false
+    private var readerActive = false
+
+    val isForegroundActive: Boolean get() = foregroundActive
+    val isReaderActive: Boolean get() = readerActive
 
     init {
         try {
             nfcAdapter = NfcAdapter.getDefaultAdapter(activity)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            NfcLog.log("Ошибка getDefaultAdapter: ${e.message}")
+        }
+        NfcLog.log(if (nfcAdapter != null) "NFC адаптер найден" else "NFC адаптер НЕ найден")
     }
 
     val isAvailable: Boolean get() = nfcAdapter != null
 
     val isEnabled: Boolean get() = nfcAdapter?.isEnabled == true
 
+    fun setTagListener(listener: (Tag) -> Unit) {
+        tagListener = listener
+    }
+
+    /**
+     * Основной путь: Reader Mode. Тег доставляется в onTagDiscovered
+     * напрямую, без intent-механики, которая на HyperOS работает нестабильно.
+     */
+    fun enableReaderMode() {
+        val adapter = nfcAdapter ?: return
+        try {
+            adapter.enableReaderMode(
+                activity, this,
+                NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,
+                null
+            )
+            readerActive = true
+            NfcLog.log("Reader mode: ВКЛ")
+        } catch (e: Exception) {
+            readerActive = false
+            NfcLog.log("Reader mode: ОШИБКА ${e.message}")
+        }
+    }
+
+    fun disableReaderMode() {
+        try {
+            nfcAdapter?.disableReaderMode(activity)
+        } catch (_: Exception) {}
+        readerActive = false
+        NfcLog.log("Reader mode: ВЫКЛ")
+    }
+
+    /** Резервный путь: Foreground Dispatch (интент-доставка). */
     fun enableForegroundDispatch() {
         val adapter = nfcAdapter ?: return
         try {
@@ -41,8 +83,7 @@ class NfcManager(private val activity: Activity) {
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or
                         android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            // Широкий набор tech-списков: ловим любую карту 13.56 МГц,
-            // а не только MIFARE Classic. Мэтчинг = "тег содержит ВСЕ tech из списка".
+            // Широкий набор tech-списков: ловим любую карту 13.56 МГц
             val techLists = arrayOf(
                 arrayOf(MifareClassic::class.java.name),
                 arrayOf(NfcA::class.java.name),
@@ -52,9 +93,11 @@ class NfcManager(private val activity: Activity) {
                 arrayOf(NfcF::class.java.name),
             )
             adapter.enableForegroundDispatch(activity, pendingIntent, null, techLists)
-            Log.d("CloneCard", "Foreground dispatch enabled")
+            foregroundActive = true
+            NfcLog.log("Foreground dispatch: ВКЛ")
         } catch (e: Exception) {
-            Log.e("CloneCard", "enableForegroundDispatch failed", e)
+            foregroundActive = false
+            NfcLog.log("Foreground dispatch: ОШИБКА ${e.message}")
         }
     }
 
@@ -62,16 +105,13 @@ class NfcManager(private val activity: Activity) {
         try {
             nfcAdapter?.disableForegroundDispatch(activity)
         } catch (_: Exception) {}
+        foregroundActive = false
+        NfcLog.log("Foreground dispatch: ВЫКЛ")
     }
 
     /**
-     * Достать Tag из intent.
-     * На Android 13+ используем типизированный getParcelableExtra,
-     * т.к. устаревший вариант может вернуть null.
-     *
-     * ВАЖНО: action НЕ проверяем — на некоторых прошивках (MIUI/HyperOS)
-     * foreground-dispatch интент приходит с пустым action, но с EXTRA_TAG.
-     * Тег извлекается напрямую; если его нет — это не NFC-интент.
+     * Достать Tag из intent (для резервного пути).
+     * action НЕ проверяем: на HyperOS интент может прийти с пустым action.
      */
     fun resolveIntent(intent: Intent?): Tag? {
         if (intent == null) return null
@@ -89,6 +129,11 @@ class NfcManager(private val activity: Activity) {
         return action == NfcAdapter.ACTION_NDEF_DISCOVERED ||
                 action == NfcAdapter.ACTION_TECH_DISCOVERED ||
                 action == NfcAdapter.ACTION_TAG_DISCOVERED
+    }
+
+    override fun onTagDiscovered(tag: Tag) {
+        NfcLog.log("Reader mode: тег получен")
+        tagListener?.invoke(tag)
     }
 
     companion object {
