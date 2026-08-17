@@ -273,25 +273,37 @@ class MainActivity : ComponentActivity() {
 
     private fun writeCardAsync(tag: Tag, dump: DumpEntity, unsafe: Boolean, onResult: (Boolean) -> Unit) {
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-            nfcState.value = nfcState.value.copy(scanning = true, message = "Запись карты...")
+            nfcState.value = nfcState.value.copy(scanning = true, message = "Запись карты...", error = null)
             try {
-                val ok = mfHandler.writeCard(tag, dump.blocks, unsafe) { progress, msg ->
+                val result = mfHandler.writeCard(tag, dump.blocks, unsafe) { progress, msg ->
                     nfcState.value = nfcState.value.copy(
                         message = "Запись: ${(progress * 100).toInt()}% — $msg"
                     )
                 }
                 withContext(Dispatchers.Main) {
+                    val msg = buildString {
+                        append(if (result.dataOk) "Данные записаны" else "Ошибка записи данных")
+                        if (unsafe) {
+                            append(". ")
+                            append(
+                                if (result.uidChanged) "UID изменён."
+                                else result.uidError ?: "UID не изменён."
+                            )
+                        }
+                    }
                     nfcState.value = nfcState.value.copy(
                         scanning = false,
-                        message = if (ok) "Карта записана успешно" else "Запись с ошибками"
+                        message = msg,
+                        error = if (!result.dataOk) "Запись данных не удалась" else null
                     )
-                    onResult(ok)
+                    onResult(result.dataOk)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     nfcState.value = nfcState.value.copy(
                         scanning = false,
-                        message = "Ошибка записи: ${e.message}"
+                        message = "Ошибка записи: ${e.message}",
+                        error = e.message
                     )
                     onResult(false)
                 }
@@ -306,7 +318,7 @@ class MainActivity : ComponentActivity() {
                 val uid = mfHandler.readUid(tag)
                 val uidHex = uid.joinToString(" ") { "%02X".format(it) }
                 val blankDump = SimulationData.createBlankDump(uidHex)
-                val ok = mfHandler.writeCard(tag, blankDump.blocks, unsafe = true) { progress, msg ->
+                val res = mfHandler.writeCard(tag, blankDump.blocks, unsafe = true) { progress, msg ->
                     nfcState.value = nfcState.value.copy(
                         message = "Очистка: ${(progress * 100).toInt()}% — $msg"
                     )
@@ -314,9 +326,9 @@ class MainActivity : ComponentActivity() {
                 withContext(Dispatchers.Main) {
                     nfcState.value = nfcState.value.copy(
                         scanning = false,
-                        message = if (ok) "Карта очищена" else "Очистка с ошибками"
+                        message = if (res.dataOk) "Карта очищена" else "Очистка с ошибками"
                     )
-                    onResult(ok)
+                    onResult(res.dataOk)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {

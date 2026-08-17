@@ -2,6 +2,7 @@ package com.kozvits.clonecard.nfc
 
 import android.nfc.Tag
 import android.nfc.tech.MifareClassic
+import android.nfc.tech.NfcA
 import java.io.IOException
 
 /**
@@ -130,43 +131,62 @@ class MfCardHandler {
 
     /**
      * Записать полный дамп на карту.
-     * @param unsafe true = разрешить запись блока 0 (UID).
+     * @param unsafe true = попытаться записать блок 0 (UID).
      */
     fun writeCard(
         tag: Tag,
         blocks: List<Int>,
         unsafe: Boolean = false,
         onProgress: (Float, String) -> Unit = { _, _ -> }
-    ): Boolean {
+    ): WriteResult {
         val mf = try { MifareClassic.get(tag)?.also { it.connect() } } catch (_: Exception) { null }
-            ?: return false
+            ?: return WriteResult(dataOk = false, uidChanged = false, uidError = "Нет подключения к карте")
 
         val key = byteArrayOf(-1, -1, -1, -1, -1, -1)   // FF FF FF FF FF FF
         val zeroKey = byteArrayOf(0, 0, 0, 0, 0, 0)
-        var success = true
+        var dataOk = true
+        var uidChanged = false
+        var uidError: String? = null
 
         try {
+            // --- UID (блок 0) ---
+            if (unsafe && blocks.size >= 16) {
+                val targetUid = blocks.subList(0, 4)
+                // Длина UUID (5-й байт) должна быть 88 для 4-байтного UID
+                val block0 = blocks.subList(0, 16).map { it.toByte() }.toByteArray()
+                val uidWritten = writeUidBlock0(tag, block0)
+                if (uidWritten) {
+                    uidChanged = true
+                    val cur = readUid(tag).joinToString(" ") { "%02X".format(it) }
+                    val tgt = targetUid.joinToString(" ") { "%02X".format(it) }
+                    if (cur != tgt) {
+                        uidChanged = false
+                        uidError = "Карта НЕ magic (UID не изменился). UID перезаписывается только на CUID/Gen-картах."
+                    }
+                } else {
+                    uidError = "Не удалось записать блок 0 (возможно, карта не magic)."
+                }
+                onProgress(0.05f, "UID: ${if (uidChanged) "OK" else "не изменён"}")
+            }
+
+            // --- Данные (секторы 0..15, блоки 1..63) ---
             for (sector in 0 until 16) {
-                onProgress(sector.toFloat() / 16f, "Сектор $sector / 16")
+                onProgress(0.05f + sector.toFloat() / 16f * 0.95f, "Сектор $sector / 16")
 
                 var authed = false
                 for (k in listOf(key, zeroKey)) {
                     try {
-                        mf.authenticateSectorWithKeyB(sector, k)
-                        authed = true
-                        break
+                        mf.authenticateSectorWithKeyB(sector, k); authed = true; break
                     } catch (_: Exception) {}
                     try {
-                        mf.authenticateSectorWithKeyA(sector, k)
-                        authed = true
-                        break
+                        mf.authenticateSectorWithKeyA(sector, k); authed = true; break
                     } catch (_: Exception) {}
                 }
                 if (!authed) continue
 
                 for (b in 0 until 4) {
                     val blockNum = sector * 4 + b
-                    if (blockNum == 0 && !unsafe) continue
+                    if (blockNum == 0) continue   // UID обработан выше
 
                     val start = blockNum * 16
                     if (start + 16 > blocks.size) continue
@@ -175,19 +195,77 @@ class MfCardHandler {
                     try {
                         mf.writeBlock(blockNum, blockData)
                     } catch (_: Exception) {
-                        if (blockNum != 0) success = false
+                        dataOk = false
                     }
                 }
             }
         } finally {
             try { mf.close() } catch (_: Exception) {}
         }
-        return success
+        return WriteResult(dataOk = dataOk, uidChanged = uidChanged, uidError = uidError)
+    }
+
+    /**
+     * Записать блок 0 (UID) через backdoor-команды magic-карт.
+     * Пробует Gen2 (direct write) и Gen1a (cnippet-команда 0x43 + 0xA0 с паролем).
+     * Возвращает true, если команда отправлена без ошибки транспорта.
+     */
+    fun writeUidBlock0(tag: Tag, block0: ByteArray): Boolean {
+        if (block0.size < 16) return false
+
+        // 1) Gen2 / CUID — прямая запись блока 0 через MifareClassic.writeBlock
+        try {
+            val mf = MifareClassic.get(tag) ?: return false
+            if (!mf.isConnected) mf.connect()
+            // Аутентификация сектора 0 ключом A = FF FF FF FF FF FF (или 00..00)
+            var authed = false
+            for (k in arrayOf(
+                byteArrayOf(-1, -1, -1, -1, -1, -1),
+                byteArrayOf(0, 0, 0, 0, 0, 0)
+            )) {
+                try { mf.authenticateSectorWithKeyA(0, k); authed = true; break }
+                catch (_: Exception) {}
+                try { mf.authenticateSectorWithKeyB(0, k); authed = true; break }
+                catch (_: Exception) {}
+            }
+            if (authed) {
+                mf.writeBlock(0, block0)
+                return true
+            }
+        } catch (_: Exception) {}
+
+        // 2) Gen1a (Magic, старые) — backdoor через cnippet-команду
+        try {
+            val nfcA = NfcA.get(tag) ?: return false
+            if (!nfcA.isConnected) nfcA.connect()
+            val wrapper = byteArrayOf(
+                0xAD.toByte(), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00
+            )
+            // WUPA (0x52) + cnippet unlock (0x40 0x43 0xA0 0x00) + 16 байт блока 0
+            val unlock = byteArrayOf(0x40, 0x43, 0xA0.toByte(), 0x00)
+            nfcA.transceive(wrapper)            // разблокировка backdoor
+            nfcA.transceive(unlock + block0)    // запись блока 0
+            try { nfcA.close() } catch (_: Exception) {}
+            return true
+        } catch (_: Exception) {}
+
+        return false
     }
 
     companion object {
         val defaultKey = byteArrayOf(-1, -1, -1, -1, -1, -1)
     }
+}
+
+/** Результат записи карты. */
+data class WriteResult(
+    val dataOk: Boolean,
+    val uidChanged: Boolean,
+    val uidError: String?
+) {
+    val success: Boolean get() = dataOk && (uidChanged || uidError == null)
 }
 
 /** Результат чтения карты. */
